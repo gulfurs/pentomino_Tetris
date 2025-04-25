@@ -112,280 +112,49 @@ class PentominoGameState:
 
 class LinearAgent:
     """
-    Simple linear function approximator for Q-learning.
-    Much faster than Deep Q-Network for simple problems.
+    Simplified Linear Q-learning agent:
+    - Immediate online updates (one-step Q-learning)
+    - True epsilon-greedy with external exponential decay
     """
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        
-        # Initialize weights with small random values instead of zeros
-        # This helps break symmetry and speeds up learning
-        self.weights = np.random.uniform(-0.1, 0.1, (action_size, state_size))
-        
-        # Initialize with stronger domain knowledge to discourage vertical stacking:
-        for a in range(action_size):
-            # Strongly penalize holes
-            self.weights[a][0] = -0.2
-            # Strongly penalize bumpiness
-            self.weights[a][1] = -0.15
-            # Severely penalize height
-            self.weights[a][2] = -0.25
-            # Reward line clears
-            self.weights[a][3] = 0.2
-            # Reward near-complete lines
-            self.weights[a][4] = 0.15
-            # Reward line opportunities
-            self.weights[a][5] = 0.15
-            # Penalize average height
-            self.weights[a][6] = -0.2
-            
-        # Much stronger horizontal movement bias
-        self.weights[0][7] = -0.2  # Move left when far from center on right
-        self.weights[1][7] = 0.2  # Move right when far from center on left
-        
-        # Better reward for rotation which helps fit pieces
-        self.weights[2][1] = -0.1  # Rotation should reduce bumpiness
-        self.weights[2][4] = 0.1   # Rotation that creates opportunities for near-complete lines
-        
-        # Smarter hard drop logic - only drop when it makes sense
-        self.weights[4][5] = 0.15  # Hard drop on good line opportunities
-        self.weights[4][2] = -0.2  # Really discourage hard drops that increase height
-        self.weights[4][0] = -0.2  # Really discourage hard drops that create holes
-        
-        # Learning parameters - adjusted for better exploration and learning
-        self.alpha = 0.03  # Higher learning rate
-        self.gamma = 0.99  # Higher discount factor for long-term rewards
-        self.epsilon = 1.0  # Exploration rate
+        # Initialize weights
+        self.weights = np.random.uniform(-0.05, 0.05, (action_size, state_size))
+        # Learning parameters
+        self.alpha = 0.01
+        self.gamma = 0.99
+        self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995  # More gradual decay
-        self.min_explore_episodes = 80  # Extended exploration period
-        self.episodes_seen = 0  # Track episodes for exploration control
-        
-        # Experience buffer
-        self.memory = deque(maxlen=7500)  # Larger memory for better learning
-        
-        # Performance tracking
-        self.best_score = 0
-        self.best_weights = None  # Store weights that achieved best score
-        self.last_improve = 0  # Episode of last improvement
-        self.no_improve_count = 0  # Count episodes with no improvement
-        self.training_iterations = 0
     
-    def remember(self, state, action, reward, next_state, done):
-        """Store experience in memory"""
-        # Store the experience
-        self.memory.append((state, action, reward, next_state, done))
-        
-        # Learn more frequently from experiences
-        if done or len(self.memory) % 8 == 0:  # Learn every 8 steps or on episode end
-            self._learn_from_memory(min(len(self.memory), 96))  # Bigger batch size
-    
-    def _learn_from_memory(self, batch_size):
-        """Learn from past experiences"""
-        if len(self.memory) < batch_size:
-            return
-            
-        # Sample with preference for recent experiences (helps with non-stationarity)
-        if len(self.memory) > batch_size*2:
-            # 75% recent experiences, 25% random from all experiences
-            recent_size = int(batch_size * 0.75)
-            random_size = batch_size - recent_size
-            
-            recent_batch = list(self.memory)[-recent_size:]
-            random_batch = random.sample(list(self.memory), random_size)
-            batch = recent_batch + random_batch
-        else:
-            batch = random.sample(self.memory, batch_size)
-        
-        for state, action, reward, next_state, done in batch:
-            # Extract feature vectors
-            state_features = state[0]  # Remove batch dimension
-            next_state_features = next_state[0]  # Remove batch dimension
-            
-            # Calculate target: r + γ·max Q(s',a')
-            if done:
-                target = reward
-            else:
-                # Calculate Q values for next state and find the maximum
-                next_q_values = np.dot(self.weights, next_state_features)
-                target = reward + self.gamma * np.max(next_q_values)
-            
-            # Calculate current Q value
-            current_q = np.dot(self.weights[action], state_features)
-            
-            # Update weights for the selected action
-            # w = w + α·(target - current_q)·features
-            # Use a varying learning rate - larger for bigger errors
-            error = target - current_q
-            adaptive_alpha = self.alpha * (1.0 + 0.6 * abs(error))  # Adapt based on error size
-            self.weights[action] += adaptive_alpha * error * state_features
-        
-        # Only decay epsilon after minimum exploration episodes
-        if self.episodes_seen > self.min_explore_episodes and self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-        
-        self.training_iterations += 1
-    
+    def predict(self, state):
+        """Return Q-values for all actions"""
+        return np.dot(self.weights, state[0])
+
     def act(self, state):
-        """Choose an action based on the current state"""
-        # Apply more gradual epsilon decay each time act() is called
-        if self.episodes_seen > self.min_explore_episodes and self.epsilon > self.epsilon_min:
-            # Apply tiny decay on each action for smoother transition
-            self.epsilon = max(self.epsilon_min, self.epsilon * 0.9998)
-        
-        # Special case for early episodes - force even more horizontal movement
-        if self.episodes_seen < 90:  # Extended early learning phase
-            # 80% chance for horizontal movement, 15% for rotation, 5% for other actions
-            dice = random.random()
-            if dice < 0.40:
-                return 0  # Move left
-            elif dice < 0.80:
-                return 1  # Move right
-            elif dice < 0.95:
-                return 2  # Rotate
-            elif dice < 0.98:
-                return 3  # Soft drop
-            else:
-                return 4  # Hard drop
-        
-        # Normal exploration vs exploitation with stronger bias toward horizontal movement
-        if np.random.rand() <= self.epsilon:
-            # Even during normal exploration, heavily bias toward horizontal movement
-            # 50% left, 50% right, 7% rotate, 2% soft drop, 1% hard drop
-            dice = random.random()
-            if dice < 0.45:
-                return 0  # Move left
-            elif dice < 0.90:
-                return 1  # Move right
-            elif dice < 0.97:
-                return 2  # Rotate
-            elif dice < 0.99:
-                return 3  # Soft drop
-            else:
-                return 4  # Hard drop
-        
-        # Exploitation: select the action with highest Q-value
-        state_features = state[0]  # Remove batch dimension
-        q_values = np.dot(self.weights, state_features)
-        
-        # Add significant bias toward horizontal movement even during exploitation
-        # This helps counteract the tendency to build vertical stacks
-        q_values[0] += 0.08  # Stronger boost for left movement
-        q_values[1] += 0.08  # Stronger boost for right movement
-        
-        # Penalize hard drops to discourage premature piece placement
-        q_values[4] -= 0.04  # Stronger penalty for hard drop
-        
-        # Dynamically adjust action selection based on board state
-        max_height = state_features[2] * GRID_HEIGHT  # Un-normalize the max height
-        bumpiness = state_features[1] * 2  # Un-scale the bumpiness
-        holes = state_features[0]
-        
-        # If the board is getting high, strongly discourage hard drops
-        if max_height > GRID_HEIGHT/3:  # If the stack is getting high (>33% of grid height)
-            height_factor = max_height / GRID_HEIGHT
-            q_values[4] -= height_factor * 0.2  # Proportional penalty to hard drop
-            
-            # When board is high, favor horizontal movement even more
-            q_values[0] += height_factor * 0.1
-            q_values[1] += height_factor * 0.1
-        
-        # If there are many holes, favor rotation and horizontal movement
-        if holes > 2:
-            q_values[2] += holes * 0.03  # Encourage rotation to fit better
-            q_values[4] -= holes * 0.03  # Discourage hard drop when holes exist
-            
-        # If bumpiness is high, strongly encourage horizontal movement and rotation
-        if bumpiness > 3:  # If the board is very bumpy
-            q_values[0] += bumpiness * 0.02  # Extra boost for horizontal movement
-            q_values[1] += bumpiness * 0.02
-            q_values[2] += bumpiness * 0.02  # Encourage rotation to flatten board
-        
-        # Check if we're nearing the middle of the board - try to avoid it
-        center_distance = state_features[7]
-        if center_distance < 0.3:  # Close to center
-            # Encourage moving away from center
-            q_values[0] += (0.3 - center_distance) * 0.15  # Move left
-            q_values[1] += (0.3 - center_distance) * 0.15  # Move right
-        
-        # Add some small noise to break ties randomly
-        q_values = q_values + np.random.uniform(-0.01, 0.01, self.action_size)
-        
-        # Special case: if we've been stacking vertically, force horizontal movement
-        # Check for high columns and low average - indicates vertical stacking
-        if max_height > 5 and max_height > state_features[6] * GRID_HEIGHT * 1.5:
-            # We have a tall column - force horizontal movement
-            horiz_values = q_values.copy()
-            horiz_values[2:] = -999  # Strongly discourage non-horizontal moves
-            return np.argmax(horiz_values)
-        
+        """Epsilon-greedy action selection"""
+        if np.random.rand() < self.epsilon:
+            return np.random.randint(self.action_size)
+        q_values = self.predict(state)
         return np.argmax(q_values)
-        
-    def track_performance(self, score):
-        """Track agent performance for adaptive learning"""
-        if score > self.best_score:
-            self.best_score = score
-            self.best_weights = self.weights.copy()
-            self.last_improve = self.episodes_seen
-            self.no_improve_count = 0
-        else:
-            self.no_improve_count += 1
-            
-            # If no improvement for a long time, try something different
-            if self.no_improve_count > 40:  # Reduced from 50
-                print(f"No improvement for {self.no_improve_count} episodes. Adjusting learning strategy.")
-                if self.best_weights is not None:
-                    # Blend current weights with best weights
-                    self.weights = 0.8 * self.best_weights + 0.2 * self.weights  # More weight to best weights
-                # Increase exploration temporarily
-                self.epsilon = min(0.6, self.epsilon * 2)  # More exploration
-                self.no_improve_count = 0
-                
-                # Reinforce anti-vertical stacking biases
-                for a in range(self.action_size):
-                    # Strengthen penalties for height and holes
-                    self.weights[a][0] *= 1.1  # Increase hole penalty
-                    self.weights[a][2] *= 1.1  # Increase height penalty
-    
-    def print_weights(self):
-        """Print the learned weights for debugging"""
-        print("\nLearned Feature Weights:")
-        feature_names = ["Holes", "Bumpiness", "Max Height", "Complete Lines", 
-                        "Near-complete Lines", "Line Opportunity", "Avg Height",
-                        "Center Distance", "I-Piece", "Versatile Piece"]
-        action_names = ["Move Left", "Move Right", "Rotate", "Soft Drop", "Hard Drop"]
-        
-        print("Feature weights by action:")
-        for a in range(self.action_size):
-            print(f"{action_names[a]}: ", end="")
-            for f in range(self.state_size):
-                print(f"{feature_names[f]}={self.weights[a][f]:.3f}  ", end="")
-            print()
-    
-    def replay(self):
-        """Empty implementation for compatibility with the main training loop"""
-        pass  # Learning happens in remember()
-    
+
+    def learn(self, state, action, reward, next_state, done):
+        """One-step Q-learning weight update"""
+        q_current = np.dot(self.weights[action], state[0])
+        q_next = 0 if done else np.max(self.predict(next_state))
+        target = reward + self.gamma * q_next
+        error = target - q_current
+        self.weights[action] += self.alpha * error * state[0]
+
+    def decay_epsilon(self, decay_rate):
+        """Decay epsilon exponentially by decay_rate"""
+        self.epsilon = max(self.epsilon_min, self.epsilon * np.exp(-decay_rate))
+
     def save(self, name):
-        """Save the learned weights"""
-        # Save current weights
         np.save(name, self.weights)
-        # If we have best weights, save those too
-        if self.best_weights is not None:
-            np.save(f"{name}_best", self.best_weights)
-        print(f"Model saved to {name}.npy with weights shape {self.weights.shape}")
-        
+
     def load(self, name):
-        """Load the learned weights"""
-        try:
-            # Try to load best weights if available
-            self.weights = np.load(f"{name}_best.npy")
-            print(f"Model loaded from {name}_best.npy with weights shape {self.weights.shape}")
-        except FileNotFoundError:
-            self.weights = np.load(f"{name}.npy")
-            print(f"Model loaded from {name}.npy with weights shape {self.weights.shape}")
-        self.epsilon = self.epsilon_min  # Set to minimum exploration
+        self.weights = np.load(f"{name}.npy")
 
 
 # Use LinearAgent instead of DQNAgent for faster learning
