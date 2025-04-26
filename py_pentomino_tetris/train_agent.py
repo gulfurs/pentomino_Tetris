@@ -8,6 +8,7 @@ from game import PentominoGame
 from constants import GRID_WIDTH, GRID_HEIGHT
 
 REWARD_BUMPINESS_PENALTY = 1  # Define penalty for bumpiness
+HORIZ_EXPLORE_EPISODES = 100  # Extended period for horizontal exploration focus
 
 class GameWrapper:
     def __init__(self):
@@ -41,28 +42,29 @@ class GameWrapper:
         lines_cleared = self.game.lines_cleared - initial_lines
         reward = 0
         if lines_cleared > 0:
-            reward += 100 * lines_cleared  # Strong reward for clearing lines
+            reward += 1000 * lines_cleared**2  # Massive reward for clearing lines
 
         # Penalty for holes
         reward -= 5 * self.count_holes()
 
-        # Penalty for high stacks
+        # Penalty for height - moderate
         max_height = max(self.calculate_column_heights())
-        reward -= 2 * max(0, max_height - GRID_HEIGHT // 2)
-
-        # Small penalty per step to encourage faster play
-        reward -= 1
+        if max_height > GRID_HEIGHT // 2:
+            reward -= max_height * 2
+        
+        # Much smaller penalty per step to avoid discouraging exploration
+        reward -= 0.1
 
         # Compute bumpiness
         heights = self.calculate_column_heights()
         bumpiness = sum(abs(heights[i] - heights[i-1]) for i in range(1, len(heights)))
-        reward -= bumpiness * REWARD_BUMPINESS_PENALTY
+        reward -= bumpiness * 1.5
 
         # Horizontal fill metric
         current_horizontal_fill = self.calculate_horizontal_fill()
         horizontal_diff = current_horizontal_fill - self.prev_horizontal_fill
         if horizontal_diff > 0:
-            reward += horizontal_diff * 50  # Reward for improved horizontal fill
+            reward += horizontal_diff * 50
         self.prev_horizontal_fill = current_horizontal_fill
 
         # Near-complete lines setup
@@ -138,7 +140,17 @@ def train_agent(episodes=1000, print_every=10):
         start_lines = env.game.lines_cleared
 
         while not done:
-            action = agent.act(state)
+            if ep < HORIZ_EXPLORE_EPISODES:
+                # During early episodes, bias heavily toward horizontal moves
+                probs = [0.4, 0.4, 0.1, 0.05, 0.05]  # Left, Right, Rotate, Down, Drop
+                action = np.random.choice(action_size, p=probs)
+            elif np.random.rand() < agent.epsilon:
+                # Modified epsilon-greedy exploration - avoid hard drops most of the time
+                probs = [0.3, 0.3, 0.3, 0.09, 0.01]  # Left, Right, Rotate, Down, Drop (rarely)
+                action = np.random.choice(action_size, p=probs)
+            else:
+                action = np.argmax(agent.predict(state))
+            
             next_state, reward, done, info = env.step(action)
             agent.learn(state, action, reward, next_state, done)
             state = next_state

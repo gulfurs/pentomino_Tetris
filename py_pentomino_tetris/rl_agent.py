@@ -121,6 +121,18 @@ class LinearAgent:
         self.action_size = action_size
         # Initialize weights
         self.weights = np.random.uniform(-0.05, 0.05, (action_size, state_size))
+        
+        # Initialize weights with bias toward good Tetris strategy
+        # Penalize holes and height heavily
+        self.weights[:, 0] *= -2.0  # Holes are very bad
+        self.weights[:, 2] *= -1.5  # Height is bad
+        self.weights[:, 4] *= 1.5   # Near-complete lines are good
+        
+        # Bias left/right actions positively to encourage horizontal movement
+        self.weights[0, :] += 0.2  # Strong bias for left 
+        self.weights[1, :] += 0.2  # Strong bias for right
+        self.weights[4, :] -= 0.5  # Very strong negative bias for hard drops
+
         # Learning parameters
         self.alpha = 0.01
         self.gamma = 0.99
@@ -139,12 +151,32 @@ class LinearAgent:
         return np.argmax(q_values)
 
     def learn(self, state, action, reward, next_state, done):
-        """One-step Q-learning weight update"""
+        """One-step Q-learning weight update with emphasis on positive rewards"""
+        # Skip update if any features contain NaN/inf
+        if not (np.isfinite(state[0]).all() and np.isfinite(next_state[0]).all()):
+            return
+            
         q_current = np.dot(self.weights[action], state[0])
+        if not np.isfinite(q_current):
+            return
+            
         q_next = 0 if done else np.max(self.predict(next_state))
+        if not np.isfinite(q_next):
+            return
+            
         target = reward + self.gamma * q_next
         error = target - q_current
-        self.weights[action] += self.alpha * error * state[0]
+        
+        if not np.isfinite(error):
+            return
+        
+        # Use different learning rates based on reward
+        # Line clears get much higher learning rate
+        learning_rate = self.alpha * 5 if reward > 50 else self.alpha
+            
+        # Update and clip weights to prevent explosion
+        self.weights[action] += learning_rate * error * state[0]
+        np.clip(self.weights, -10.0, 10.0, out=self.weights)
 
     def decay_epsilon(self, decay_rate):
         """Decay epsilon exponentially by decay_rate"""
