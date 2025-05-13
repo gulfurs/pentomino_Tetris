@@ -2,16 +2,6 @@
 
 A Python implementation of Tetris using pentomino pieces (5-block pieces instead of the traditional 4-block tetrominos).
 
-## Overview
-
-This project extends the classic Tetris game by using pentominoes, which creates new challenges and gameplay dynamics. The game features:
-
-- 18 unique pentomino pieces
-- Multiple difficulty levels
-- AI agent for automatic play
-- Score tracking and high score system
-- Piece preview and hold functionality
-
 ## Requirements
 
 - Python 3.7+
