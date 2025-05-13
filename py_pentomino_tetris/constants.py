@@ -1,8 +1,4 @@
-"""
-Constants for the Pentomino Tetris Game
-"""
-
-# Colors (RGB values)
+# Colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
@@ -13,14 +9,14 @@ YELLOW = (255, 255, 0)
 PURPLE = (128, 0, 128)
 GRAY = (128, 128, 128)
 
-# Game dimensions
-BLOCK_SIZE = 30  # Size of each grid block in pixels
-GRID_WIDTH = 15  # Width of the game grid (cells)
-GRID_HEIGHT = 20  # Height of the game grid (cells)
-SCREEN_WIDTH = GRID_WIDTH * BLOCK_SIZE + 200  # Additional space for score, next piece, etc.
+# dimensions
+BLOCK_SIZE = 30  
+GRID_WIDTH = 10  
+GRID_HEIGHT = 20  
+SCREEN_WIDTH = GRID_WIDTH * BLOCK_SIZE + 200
 SCREEN_HEIGHT = GRID_HEIGHT * BLOCK_SIZE
 
-# Game parameters
+# parameters
 FPS = 60
-FALL_SPEED = 1  # Base falling speed (blocks per second)
-FALL_SPEED_INCREMENT = 0.1  # How much to increase speed as score increases
+FALL_SPEED = 1  
+FALL_SPEED_INCREMENT = 0.1 
